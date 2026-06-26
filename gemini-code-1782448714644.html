@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>위도경도 보물을 찾아라!</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <style>
+        .grid-board {
+            display: grid;
+            grid-template-columns: minmax(65px, auto) repeat(10, minmax(32px, 1fr));
+        }
+        .hit-animation {
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); background-color: #ef4444; }
+        }
+        /* 스크롤바 커스텀 */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans antialiased">
+
+    <div id="turn-alert-overlay" class="hidden fixed inset-0 flex items-center justify-center bg-black/70 z-50 backdrop-blur-sm transition-all duration-300">
+        <div id="turn-alert-box" class="bg-gradient-to-br from-indigo-600 to-violet-700 p-8 rounded-3xl border-2 border-indigo-400 text-center shadow-2xl max-w-sm mx-4 transform scale-95 transition-transform duration-200">
+            <div class="text-6xl mb-4 animate-bounce">🎯</div>
+            <h2 class="text-3xl font-black text-white tracking-wide mb-2">당신의 공격 턴!</h2>
+            <p class="text-indigo-200 text-sm leading-relaxed">상대방의 포격이 빗나갔습니다.<br>위도와 경도를 조준해 타격하세요!</p>
+        </div>
+    </div>
+
+    <script>
+        // =========================================================================
+        // 🔥 선생님의 파이어베이스 설정값 결합 완료!
+        // =========================================================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyAnwlZGqihRNw5hrNIY6HEPF80xlTYMDNg",
+            authDomain: "latitude-5e4bc.firebaseapp.com",
+            projectId: "latitude-5e4bc",
+            storageBucket: "latitude-5e4bc.firebasestorage.app",
+            messagingSenderId: "562284608353",
+            appId: "1:562284608353:web:db613985987c18eca3e320"
+        };
+        // =========================================================================
+
+        // 파이어베이스 초기화 작동
+        let db;
+        try {
+            firebase.initializeApp(firebaseConfig);
+            db = firebase.firestore();
+        } catch (e) {
+            console.error("파이어베이스 설정 로드 실패:", e);
+        }
+    </script>
+
+    <div class="max-w-[1600px] mx-auto p-4 lg:p-6">
+        
+        <div id="screen-lobby" class="max-w-2xl mx-auto mt-8 bg-slate-800 p-6 lg:p-8 rounded-3xl shadow-2xl border border-slate-700">
+            <div class="text-center mb-6">
+                <h2 class="text-4xl font-black text-indigo-400 mb-2">🗺️ 위도경도 보물을 찾아라!</h2>
+                <p class="text-slate-400 text-sm mt-2">지구본에서 보던 위도와 경도 좌표를 이용해 친구들과 펼치는 실시간 숨바꼭질 배틀!</p>
+            </div>
+
+            <div class="bg-cyan-950/40 border border-cyan-800 p-3 rounded-xl text-xs text-cyan-300 flex items-center gap-2 mb-4">
+                <span>💡</span>
+                <p><b>튕김 방지 시스템 작동 중:</b> 게임 도중 실수로 새로고침을 하거나 튕겼더라도, <b>기존과 똑같은 닉네임과 방 번호</b>를 쓰고 들어오면 원래 하던 경기로 자동 복귀됩니다!</p>
+            </div>
+
+            <div class="bg-slate-900/80 p-4 rounded-2xl border border-indigo-900/60 mb-6 space-y-3">
+                <h3 class="font-bold text-indigo-300 flex items-center gap-1 text-base">📜 [필독] 6학년 전술 보물 도감</h3>
+                <p class="text-xs text-slate-400 leading-relaxed">
+                    이 게임은 <b>총 6개의 보물</b>을 지도에 숨기고 교대로 포격해서 맞추는 게임이에요. <br>
+                    위도와 경도의 성질에 따라 숨길 수 있는 자리가 정해져 있으니 규칙을 잘 읽어보세요!
+                </p>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    <div class="p-2.5 bg-slate-800 rounded-xl border border-slate-700">
+                        <span class="font-bold text-blue-400">🚢 위도보물 (2개)</span>
+                        <p class="text-slate-400 mt-0.5 font-normal">지구의 가로선인 위도선과 같습니다. <b>가로로 3칸(↔️)</b> 연속해서 누워있는 보물이에요.</p>
+                    </div>
+                    <div class="p-2.5 bg-slate-800 rounded-xl border border-slate-700">
+                        <span class="font-bold text-emerald-400">🚢 경도보물 (2개)</span>
+                        <p class="text-slate-400 mt-0.5 font-normal">지구의 세로선인 경도선과 같습니다. <b>세로로 3칸(↕️)</b> 연속해서 누워있는 보물이에요.</p>
+                    </div>
+                    <div class="p-2.5 bg-slate-800 rounded-xl border border-rose-950 bg-rose-950/20">
+                        <span class="font-bold text-rose-400">💎 적도보물 (1개)</span>
+                        <p class="text-slate-400 mt-0.5 font-normal">지구의 중심인 <b>가로 빨간선 '적도(0°)' 위에 딱 1칸</b>만 숨길 수 있는 아주 귀한 보물이에요!</p>
+                    </div>
+                    <div class="p-2.5 bg-slate-800 rounded-xl border border-amber-950 bg-amber-950/20">
+                        <span class="font-bold text-amber-400">💎 자오선보물 (1개)</span>
+                        <p class="text-slate-400 mt-0.5 font-normal">시간의 기준인 <b>세로 빨간선 '자오선(0°)' 위에 딱 1칸</b>만 숨길 수 있는 특수 보물이에요!</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="space-y-4 pt-2 border-t border-slate-700">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-300 mb-1">👤 내 닉네임</label>
+                        <input id="input-name" type="text" class="w-full bg-slate-700 border border-slate-600 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold" placeholder="이름을 입력하세요">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-300 mb-1">🔑 우리 반 주파수 (방 번호)</label>
+                        <input id="input-room" type="text" inputmode="numeric" pattern="[0-9]*" class="w-full bg-slate-700 border border-slate-600 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono font-bold" placeholder="예: 1234">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-300 mb-1">🚩 나의 팀 선택</label>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button id="btn-team-A" onclick="selectTeam('A')" class="py-2.5 rounded-xl font-bold border-2 border-blue-500 bg-blue-950/40 text-blue-400">🔵 청팀 (Team A)</button>
+                        <button id="btn-team-B" onclick="selectTeam('B')" class="py-2.5 rounded-xl font-bold border border-slate-600 bg-slate-700/40 text-slate-400">🔴 홍팀 (Team B)</button>
+                    </div>
+                </div>
+                
+                <button id="btn-join" onclick="connectToGame()" class="w-full bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-bold py-3 rounded-xl text-lg mt-2 shadow-lg shadow-indigo-900/40">
+                    🛰️ 실시간 전술 주파수 접속하기
+                </button>
+            </div>
+        </div>
+
+        <div id="screen-game" class="hidden grid grid-cols-1 xl:grid-cols-4 gap-6 animate-fade-in">
+            
+            <div class="xl:col-span-3 space-y-6">
+                <div class="bg-slate-800 p-4 rounded-2xl flex flex-wrap justify-between items-center border border-slate-700 gap-4 shadow-xl">
+                    <div>
+                        <h1 class="text-2xl font-black text-indigo-400 tracking-tight">📍 전술 채널: <span id="text-room-id" class="font-mono text-white"></span></h1>
+                        <p class="text-xs text-slate-400 mt-0.5">나의 신분: <span id="text-my-identity" class="font-bold"></span></p>
+                    </div>
+                    <div id="status-badge" class="px-5 py-2.5 rounded-full text-sm font-black bg-amber-950 text-amber-400 border border-amber-800">
+                        보물을 배치해주세요!
+                    </div>
+                    <div class="flex gap-2" id="setup-controls">
+                        <button id="btn-clear-ships" onclick="clearMyShips()" class="bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 px-4 py-2 rounded-xl text-sm font-bold transition">🔄 초기화</button>
+                        <button id="btn-rand-layout" onclick="reshuffleLayout()" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-xl text-sm font-bold transition">🎲 자동 배치</button>
+                        <button id="btn-ready" onclick="clickReady()" class="bg-emerald-600 hover:bg-emerald-500 px-5 py-2 rounded-xl text-sm font-bold transition">✔️ 배치 완료</button>
+                        <button id="btn-start" onclick="clickStart()" class="hidden bg-indigo-600 hover:bg-indigo-500 px-6 py-2 rounded-xl text-sm font-black transition">🚀 작전 개시</button>
+                    </div>
+                </div>
+
+                <div class="bg-slate-900 border border-slate-700 p-3 rounded-xl text-center text-sm font-bold text-indigo-300 shadow-inner">
+                    🔍 현재 조준경 위치: <span id="current-coord-indicator" class="text-yellow-400 font-mono text-base ml-1">지도를 탐색하세요</span>
+                </div>
+
+                <div id="placement-tool-panel" class="bg-slate-800 p-4 rounded-2xl border border-indigo-900/60 shadow-md">
+                    <h4 class="font-bold text-sm text-indigo-300 mb-2">🛠️ 숨길 보물을 선택하고, 왼쪽 '아군 지도'의 원하는 칸을 클릭해 숨기세요!</h4>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2" id="ship-selector-zone">
+                        <button onclick="selectShipToPlace('위도1')" id="btn-ship-위도1" class="p-2.5 rounded-xl border-2 border-indigo-500 bg-indigo-950 text-xs font-bold text-left">
+                            <div>🚢 위도보물 1</div>
+                            <div class="text-[10px] text-slate-400 font-normal mt-0.5">가로 3칸 (↔️)</div>
+                        </button>
+                        <button onclick="selectShipToPlace('위도2')" id="btn-ship-위도2" class="p-2.5 rounded-xl border border-slate-600 bg-slate-700/40 text-xs font-bold text-left opacity-60">
+                            <div>🚢 위도보물 2</div>
+                            <div class="text-[10px] text-slate-400 font-normal mt-0.5">가로 3칸 (↔️)</div>
+                        </button>
+                        <button onclick="selectShipToPlace('경도1')" id="btn-ship-경도1" class="p-2.5 rounded-xl border border-slate-600 bg-slate-700/40 text-xs font-bold text-left opacity-60">
+                            <div>🚢 경도보물 1</div>
+                            <div class="text-[10px] text-slate-400 font-normal mt-0.5">세로 3칸 (↕️)</div>
+                        </button>
+                        <button onclick="selectShipToPlace('경도2')" id="btn-ship-경도2" class="p-2.5 rounded-xl border border-slate-600 bg-slate-700/40 text-xs font-bold text-left opacity-60">
+                            <div>🚢 경도보물 2</div>
+                            <div class="text-[10px] text-slate-400 font-normal mt-0.5">세로 3칸 (↕️)</div>
+                        </button>
+                        <button onclick="selectShipToPlace('적도')" id="btn-ship-적도" class="p-2.5 rounded-xl border border-slate-600 bg-slate-700/40 text-xs font-bold text-left opacity-60">
+                            <div>💎 적도보물</div>
+                            <div class="text-[10px] text-rose-400 font-normal mt-0.5">적도선 위 1칸</div>
+                        </button>
+                        <button onclick="selectShipToPlace('자오선')" id="btn-ship-자오선" class="p-2.5 rounded-xl border border-slate-600 bg-slate-700/40 text-xs font-bold text-left opacity-60">
+                            <div>💎 자오선보물</div>
+                            <div class="text-[10px] text-amber-400 font-normal mt-0.5">자오선선 위 1칸</div>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-800/60 p-4 rounded-2xl border border-slate-700">
+                    <div class="p-3 bg-blue-950/30 rounded-xl border border-blue-900/40">
+                        <h4 class="font-bold text-blue-400 text-sm mb-2 flex justify-between"><span>🔵 청팀 대원 정보</span><span id="ready-count-A" class="text-xs text-slate-400"></span></h4>
+                        <div id="player-list-A" class="flex flex-wrap gap-2 text-xs"></div>
+                    </div>
+                    <div class="p-3 bg-rose-950/30 rounded-xl border border-rose-900/40">
+                        <h4 class="font-bold text-rose-400 text-sm mb-2 flex justify-between"><span>🔴 홍팀 대원 정보</span><span id="ready-count-B" class="text-xs text-slate-400"></span></h4>
+                        <div id="player-list-B" class="flex flex-wrap gap-2 text-xs"></div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-slate-800 p-4 rounded-2xl border border-slate-700 shadow-xl">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-md font-bold text-emerald-400 flex items-center gap-1">🛡️ 아군 보물섬 지도 <span class="text-xs font-normal text-slate-400">(우리팀 기지 정보)</span></h3>
+                            <span id="my-team-treasure-count" class="text-xs font-semibold bg-slate-700 px-2.5 py-1 rounded-full text-slate-300">배치된 보물: 0 / 6개</span>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <div id="board-my" class="grid-board gap-1 min-w-[440px]"></div>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-800 p-4 rounded-2xl border border-slate-700 shadow-xl">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-md font-bold text-rose-400 flex items-center gap-1">🎯 상대편 바다 <span class="text-xs font-normal text-slate-400">(교차점 클릭하여 타격)</span></h3>
+                            <span id="enemy-team-treasure-count" class="text-xs font-semibold bg-slate-700 px-2.5 py-1 rounded-full text-slate-300">보물 상태: 대기 중</span>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <div id="board-enemy" class="grid-board gap-1 min-w-[440px]"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="xl:col-span-1 flex flex-col gap-4 h-[780px]">
+                
+                <div class="bg-slate-950 p-4 rounded-2xl border border-slate-800 flex flex-col h-1/2 shadow-2xl">
+                    <h4 class="text-indigo-400 font-bold text-sm mb-2 pb-2 border-b border-slate-800 flex items-center gap-1">
+                        📡 위도·경도 작전 기록 통신창
+                    </h4>
+                    <div id="log-box" class="space-y-2 text-xs overflow-y-auto font-mono text-slate-300 flex-1 pr-1"></div>
+                </div>
+
+                <div class="p-4 rounded-2xl flex flex-col h-1/2 shadow-2xl border transition-all duration-300" id="chat-panel-container">
+                    <h4 class="font-black text-sm mb-2 pb-2 border-b flex justify-between items-center" id="chat-panel-title">
+                        <span>💬 우리 팀 전용 비밀 통신망</span>
+                        <span class="text-[10px] font-normal px-2 py-0.5 rounded-full bg-slate-900 text-slate-400 border border-slate-700">보안 암호화</span>
+                    </h4>
+                    
+                    <div id="chat-msg-box" class="space-y-2 text-xs overflow-y-auto flex-1 pr-1 mb-2 content-start">
+                        <p class="text-slate-500 text-center py-2 text-[11px]">🔐 같은 팀원끼리만 수신 가능한 주파수 무전망입니다.</p>
+                    </div>
+
+                    <div class="flex gap-1.5 mt-auto pt-1">
+                        <input id="input-chat-text" type="text" onkeypress="if(event.keyCode===13) sendTeamChatMessage();" class="flex-1 bg-slate-900 border border-slate-700 text-xs rounded-xl px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="팀원에게 작전 지시하기...">
+                        <button onclick="sendTeamChatMessage()" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-3 py-2 rounded-xl text-xs transition shrink-0">전송</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const lats = ['N150', 'N120', 'N90', 'N60', 'N30', '0', 'S30', 'S60', 'S90', 'S120'];
+        const lngs = ['W120', 'W90', 'W60', 'W30', '0', 'E30', 'E60', 'E90', 'E120', 'E150'];
+
+        let savedId = localStorage.getItem('latlng_game_myId');
+        if(!savedId) {
+            savedId = 'p_' + Math.random().toString(36).substring(2, 11);
+            localStorage.setItem('latlng_game_myId', savedId);
+        }
+        const myId = savedId;
+        
+        let myName = '', roomId = '', myTeam = 'A', myReady = false, roomTopic = '';
+        let statusGame = 'setup', activeTurnTeam = 'A', cloudRoomData = null;
+
+        let myLocalBoard = Array(10).fill(null).map(() => Array(10).fill(null));
+        let myLocalShips = [];
+        let currentlySelectedShipKey = '위도1';
+
+        let finalTeamBoards = { A: null, B: null };
+        let finalTeamShips = { A: [], B: [] };
+        let attackMarks = {
+            A: Array(10).fill(null).map(() => Array(10).fill(null)),
+            B: Array(10).fill(null).map(() => Array(10).fill(null))
+        };
+
+        const shipMetadata = {
+            '위도1': { name: '위도보물 1', type: '위도보물', size: 3, dir: 'h' },
+            '위도2': { name: '위도보물 2', type: '위도보물', size: 3, dir: 'h' },
+            '경도1': { name: '경도보물 1', type: '경도보물', size: 3, dir: 'v' },
+            '경도2': { name: '경도보물 2', type: '경도보물', size: 3, dir: 'v' },
+            '적도': { name: '적도보물', type: '적도보물', size: 1, dir: 'point', reqLat: '0' },
+            '자오선': { name: '자오선보물', type: '본초자오선보물', size: 1, dir: 'point', reqLng: '0' }
+        };
+
+        window.onload = function() {
+            if(localStorage.getItem('latlng_last_name')) document.getElementById('input-name').value = localStorage.getItem('latlng_last_name');
+            if(localStorage.getItem('latlng_last_room')) document.getElementById('input-room').value = localStorage.getItem('latlng_last_room');
+            if(localStorage.getItem('latlng_last_team')) selectTeam(localStorage.getItem('latlng_last_team'));
+        };
+
+        function getReadableCoord(r, c) {
+            const latText = lats[r] === '0' ? '적도(0°)' : (lats[r].startsWith('N') ? `북위 ${lats[r].slice(1)}°` : `남위 ${lats[r].slice(1)}°`);
+            const lngText = lngs[c] === '0' ? '본초 자오선(0°)' : (lngs[c].startsWith('W') ? `서경 ${lngs[c].slice(1)}°` : `동경 ${lngs[c].slice(1)}°`);
+            return `${latText}, ${lngText}`;
+        }
+
+        function updateCoordIndicator(r, c) {
+            document.getElementById('current-coord-indicator').innerText = getReadableCoord(r, c);
+        }
+
+        function selectTeam(team) {
+            myTeam = team;
+            const btnA = document.getElementById('btn-team-A');
+            const btnB = document.getElementById('btn-team-B');
+            if(team === 'A') {
+                btnA.className = "py-2.5 rounded-xl font-bold border-2 border-blue-500 bg-blue-950/40 text-blue-400";
+                btnB.className = "py-2.5 rounded-xl font-bold border border-slate-600 bg-slate-700/40 text-slate-400";
+            } else {
+                btnB.className = "py-2.5 rounded-xl font-bold border-2 border-rose-500 bg-rose-950/40 text-rose-400";
+                btnA.className = "py-2.5 rounded-xl font-bold border border-slate-600 bg-slate-700/40 text-slate-400";
+            }
+        }
+
+        function connectToGame() {
+            myName = document.getElementById('input-name').value.trim();
+            roomId = document.getElementById('input-room').value.trim();
+            if(!myName || !roomId) { alert('닉네임과 방 번호를 입력해주세요!'); return; }
+
+            localStorage.setItem('latlng_last_name', myName);
+            localStorage.setItem('latlng_last_room', roomId);
+            localStorage.setItem('latlng_last_team', myTeam);
+
+            const roomRef = db.collection("rooms").doc(roomId);
+            
+            document.getElementById('btn-join').disabled = true;
+            document.getElementById('btn-join').innerText = "📡 주파수 사령부 채널 동기화 중...";
+
+            roomRef.get().then((doc) => {
+                if (doc.exists) {
+                    const data = doc.data();
+                    let nameExists = false;
+                    for (let id in data.players) {
+                        if (data.players[id].name === myName && id !== myId) {
+                            nameExists = true;
+                            break;
+                        }
+                    }
+                    if (nameExists) {
+                        alert(`⚠️ [입장 제한] 해당 방에 이미 '${myName}'(이)라는 이름의 대원이 작전을 수행 중입니다. 다른 닉네임을 사용해주세요!`);
+                        document.getElementById('btn-join').disabled = false;
+                        document.getElementById('btn-join').innerText = "🛰️ 실시간 전술 주파수 접속하기";
+                        return;
+                    }
+                }
+                
+                proceedToGameScreen();
+
+                // 파이어베이스 데이터베이스 실시간 구독 스트림 연결
+                roomRef.onSnapshot((docSnapshot) => {
+                    if (!docSnapshot.exists) {
+                        initFirebaseRoom();
+                    } else {
+                        cloudRoomData = docSnapshot.data();
+                        syncWithCloudData(cloudRoomData);
+                    }
+                });
+            }).catch((err) => {
+                alert("서버 통신 실패: 파이어베이스 설정 및 규칙을 다시 한번 확인해주세요!");
+                document.getElementById('btn-join').disabled = false;
+                document.getElementById('btn-join').innerText = "🛰️ 실시간 전술 주파수 접속하기";
+            });
+        }
+
+        function proceedToGameScreen() {
+            document.getElementById('screen-lobby').classList.add('hidden');
+            document.getElementById('screen-game').classList.remove('hidden');
+            document.getElementById('text-room-id').innerText = roomId;
+            updateIdentityText();
+            setupChatStyleByTeam();
+            renderBoardsUI();
+        }
+
+        function initFirebaseRoom() {
+            const initialData = {
+                status: 'setup',
+                activeTurnTeam: 'A',
+                players: {},
+                boards: { A: null, B: null },
+                ships: { A: '[]', B: '[]' },
+                attackMarks: {
+                    A: JSON.stringify(Array(10).fill('').map(() => Array(10).fill(''))),
+                    B: JSON.stringify(Array(10).fill('').map(() => Array(10).fill('')))
+                },
+                chatsA: [],
+                chatsB: [],
+                logs: ["📡 사령부 전술 클라우드 채널이 생성되었습니다."]
+            };
+            db.collection("rooms").doc(roomId).set(initialData);
+        }
+
+        function syncWithCloudData(data) {
+            statusGame = data.status;
+            const oldTurn = activeTurnTeam;
+            activeTurnTeam = data.activeTurnTeam;
+
+            // 🛠️ 파이어베이스 중첩 배열 회피용 안전 해독(Parsing) 로직 이식
+            finalTeamBoards = {
+                A: data.boards.A ? JSON.parse(data.boards.A) : null,
+                B: data.boards.B ? JSON.parse(data.boards.B) : null
+            };
+            finalTeamShips = {
+                A: typeof data.ships.A === 'string' ? JSON.parse(data.ships.A) : [],
+                B: typeof data.ships.B === 'string' ? JSON.parse(data.ships.B) : []
+            };
+            attackMarks = {
+                A: data.attackMarks.A ? JSON.parse(data.attackMarks.A) : Array(10).fill(null).map(() => Array(10).fill(null)),
+                B: data.attackMarks.B ? JSON.parse(data.attackMarks.B) : Array(10).fill(null).map(() => Array(10).fill(null))
+            };
+
+            if(!data.players[myId] || data.players[myId].name !== myName || data.players[myId].team !== myTeam) {
+                db.collection("rooms").doc(roomId).update({
+                    [`players.${myId}`]: { name: myName, team: myTeam, ready: myReady }
+                });
+                return;
+            }
+
+            myReady = data.players[myId].ready;
+
+            const listA = document.getElementById('player-list-A');
+            const listB = document.getElementById('player-list-B');
+            listA.innerHTML = ''; listB.innerHTML = '';
+            let readyA = 0, totalA = 0, readyB = 0, totalB = 0;
+
+            for(let id in data.players) {
+                const p = data.players[id];
+                const b = document.createElement('span');
+                b.className = `px-2.5 py-1 rounded-lg border text-xs font-medium ${p.ready ? 'bg-emerald-950/60 border-emerald-500 text-emerald-400' : 'bg-slate-700/60 border-slate-600 text-slate-300'}`;
+                b.innerText = `${p.name}${p.ready ? ' (완료)' : ' (배치중)'}`;
+                if(p.team === 'A') { listA.appendChild(b); totalA++; if(p.ready) readyA++; }
+                else { listB.appendChild(b); totalB++; if(p.ready) readyB++; }
+            }
+
+            document.getElementById('ready-count-A').innerText = `준비됨: ${readyA}/${totalA}`;
+            document.getElementById('ready-count-B').innerText = `준비됨: ${readyB}/${totalB}`;
+
+            const logBox = document.getElementById('log-box');
+            logBox.innerHTML = data.logs.map(log => `<p>> ${log}</p>`).join('');
+            logBox.scrollTop = logBox.scrollHeight;
+
+            const chatBox = document.getElementById('chat-msg-box');
+            chatBox.innerHTML = `<p class="text-slate-500 text-center py-2 text-[11px]">🔐 같은 팀원끼리만 수신 가능한 주파수 무전망입니다.</p>`;
+            const teamChats = myTeam === 'A' ? (data.chatsA || []) : (data.chatsB || []);
+            teamChats.forEach(msg => {
+                const div = document.createElement('div');
+                const isMe = msg.senderId === myId;
+                div.className = `flex flex-col max-w-[85%] ${isMe ? 'ml-auto items-end' : 'mr-auto items-start'}`;
+                div.innerHTML = `<span class="text-[10px] text-slate-500 px-1 mb-0.5">${msg.sender}</span>
+                                 <div class="p-2 rounded-xl text-xs leading-snug break-all ${isMe ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700'}">${msg.text}</div>`;
+                chatBox.appendChild(div);
+            });
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            const badgeEl = document.getElementById('status-badge');
+            if(statusGame === 'setup') {
+                if(readyA > 0 && readyB > 0) {
+                    badgeEl.innerText = "🚀 모든 팀 준비 완료! 작전을 개시할 수 있습니다.";
+                    badgeEl.className = "px-5 py-2.5 rounded-full text-sm font-black bg-emerald-900 text-emerald-300 border border-emerald-600";
+                    document.getElementById('btn-start').classList.remove('hidden');
+                } else {
+                    badgeEl.innerText = myReady ? "⏳ 다른 팀원들의 배치를 기다리고 있습니다..." : "보물을 지도에 터치해 숨겨주세요!";
+                    badgeEl.className = "px-5 py-2.5 rounded-full text-sm font-bold bg-amber-950 text-amber-400 border border-amber-800";
+                    document.getElementById('btn-start').classList.add('hidden');
+                }
+            } else if(statusGame === 'playing') {
+                document.getElementById('setup-controls').classList.add('hidden');
+                document.getElementById('placement-tool-panel').classList.add('hidden');
+                
+                if(activeTurnTeam === myTeam) {
+                    badgeEl.innerText = "🟢 아군 포격 차례입니다!";
+                    badgeEl.className = "px-5 py-2.5 rounded-full text-sm font-black bg-green-900 text-green-300 border border-green-600 animate-pulse";
+                    if(oldTurn !== myTeam) showBigTurnAlert();
+                } else {
+                    const korName = activeTurnTeam === 'A' ? '청팀' : '홍팀';
+                    badgeEl.innerText = `🔴 상대편 (${korName}) 작전 중...`;
+                    badgeEl.className = "px-5 py-2.5 rounded-full text-sm font-bold bg-rose-950 text-rose-400 border border-rose-800";
+                }
+            }
+
+            checkGameOverConditions(data);
+            renderBoardsUI();
+        }
+
+        function updateIdentityText() {
+            const teamText = myTeam === 'A' ? '<span class="text-blue-400">청팀(A)</span>' : '<span class="text-rose-400">홍팀(B)</span>';
+            document.getElementById('text-my-identity').innerHTML = `${myName} 대원 [${teamText}]`;
+        }
+
+        function setupChatStyleByTeam() {
+            const chatPanel = document.getElementById('chat-panel-container');
+            const chatTitle = document.getElementById('chat-panel-title');
+            if(myTeam === 'A') {
+                chatPanel.className = "p-4 rounded-2xl flex flex-col h-1/2 shadow-2xl border border-blue-900 bg-blue-950/10";
+                chatTitle.className = "font-black text-sm mb-2 pb-2 border-b border-blue-900/60 text-blue-400 flex justify-between items-center";
+            } else {
+                chatPanel.className = "p-4 rounded-2xl flex flex-col h-1/2 shadow-2xl border border-rose-900 bg-rose-950/10";
+                chatTitle.className = "font-black text-sm mb-2 pb-2 border-b border-rose-900/60 text-rose-400 flex justify-between items-center";
+            }
+        }
+
+        function startPresenceHeartbeat() {
+            setInterval(() => {
+                if(db && roomId) {
+                    db.collection("rooms").doc(roomId).update({ [`players.${myId}.lastSeen`]: Date.now() });
+                }
+            }, 2000);
+        }
+
+        function sendTeamChatMessage() {
+            const input = document.getElementById('input-chat-text');
+            const text = input.value.trim();
+            if(!text) return;
+
+            const chatField = myTeam === 'A' ? 'chatsA' : 'chatsB';
+            db.collection("rooms").doc(roomId).update({
+                [chatField]: firebase.firestore.FieldValue.arrayUnion({
+                    sender: myName,
+                    senderId: myId,
+                    text: text,
+                    timestamp: Date.now()
+                })
+            });
+            input.value = '';
+        }
+
+        function handleMyBoardCellClick(r, c) {
+            if(statusGame !== 'setup' || myReady) return;
+
+            const meta = shipMetadata[currentlySelectedShipKey];
+            let coords = [];
+
+            if(meta.dir === 'point') {
+                if(meta.reqLat && lats[r] !== meta.reqLat) { alert("🚨 적도보물은 가로 빨간선인 '적도(0°)' 위에만 숨길 수 있어요!"); return; }
+                if(meta.reqLng && lngs[c] !== meta.reqLng) { alert("🚨 자오선보물은 세로 빨간선인 '본초자오선(0°)' 위에만 숨길 수 있어요!"); return; }
+                coords.push([r, c]);
+            } else if(meta.dir === 'v') {
+                if(r + meta.size > 10) { alert("🚨 지도의 세로 범위를 벗어나요! 조금 더 위쪽 칸을 클릭해보세요."); return; }
+                for(let i=0; i<meta.size; i++) coords.push([r+i, c]);
+            } else if(meta.dir === 'h') {
+                if(c + meta.size > 10) { alert("🚨 지도의 가로 범위를 벗어나요! 조금 더 왼쪽 칸을 클릭해보세요."); return; }
+                for(let i=0; i<meta.size; i++) coords.push([r, c+i]);
+            }
+
+            myLocalShips = myLocalShips.filter(s => s.key !== currentlySelectedShipKey);
+            
+            let tempBoard = Array(10).fill(null).map(() => Array(10).fill(null));
+            myLocalShips.forEach(s => { s.coords.forEach(([sr, sc]) => { tempBoard[sr][sc] = s; }); });
+
+            const isOverlap = coords.some(([cr, cc]) => tempBoard[cr][cc] !== null);
+            if(isOverlap) { alert("🚨 앗! 이미 다른 보물이 숨겨진 칸과 겹쳐요. 다른 자리를 골라주세요!"); return; }
+
+            let newShipObj = { id: Math.random().toString(), key: currentlySelectedShipKey, type: meta.type, coords: coords, hitCount: 0, sunk: false };
+            myLocalShips.push(newShipObj);
+
+            myLocalBoard = Array(10).fill(null).map(() => Array(10).fill(null));
+            myLocalShips.forEach(s => { s.coords.forEach(([sr, sc]) => { myLocalBoard[sr][sc] = s; }); });
+
+            renderBoardsUI();
+            autoSelectNextShipTool();
+        }
+
+        function autoSelectNextShipTool() {
+            const keys = Object.keys(shipMetadata);
+            const currentIdx = keys.indexOf(currentlySelectedShipKey);
+            const nextKey = keys[(currentIdx + 1) % keys.length];
+            selectShipToPlace(nextKey);
+        }
+
+        function clearMyShips() {
+            if(myReady) return;
+            myLocalBoard = Array(10).fill(null).map(() => Array(10).fill(null));
+            myLocalShips = [];
+            renderBoardsUI();
+        }
+
+        function reshuffleLayout() {
+            if(myReady) return;
+            let board = Array(10).fill(null).map(() => Array(10).fill(null)); let ships = []; let idCounter = 1;
+            const checkOverlap = (coords) => coords.some(([r, c]) => board[r][c] !== null);
+            const place = (coords, type, key) => {
+                let s = { id: (idCounter++).toString(), key, type, coords, hitCount: 0, sunk: false };
+                coords.forEach(([r, c]) => { board[r][c] = s; }); ships.push(s);
+            };
+            while(true) { let c = Math.floor(Math.random()*10); if(!checkOverlap([[5, c]])) { place([[5, c]], '적도보물', '적도'); break; } }
+            while(true) { let r = Math.floor(Math.random()*10); if(!checkOverlap([[r, 4]])) { place([[r, 4]], '본초자오선보물', '자오선'); break; } }
+            for(let i=1; i<=2; i++){ while(true){ let r=Math.floor(Math.random()*10), c=Math.floor(Math.random()*8); if(!checkOverlap([[r,c],[r,c+1],[r,c+2]])){ place([[r,c],[r,c+1],[r,c+2]], '위도보물', `위도${i}`); break; } } }
+            for(let i=1; i<=2; i++){ while(true){ let r=Math.floor(Math.random()*8), c=Math.floor(Math.random()*10); if(!checkOverlap([[r,c],[r+1,c],[r+2,c]])){ place([[r,c],[r+1,c],[r+2,c]], '경도보물', `경도${i}`); break; } } }
+            myLocalBoard = board; myLocalShips = ships;
+            renderBoardsUI();
+        }
+
+        function clickReady() {
+            if(myLocalShips.length < 6) {
+                alert(`⚠️ 아직 숨기지 못한 보물이 ${6 - myLocalShips.length}개 있어요! 6개를 다 배치해야 완료할 수 있습니다.`);
+                return;
+            }
+            myReady = true;
+            document.getElementById('btn-ready').disabled = true;
+            document.getElementById('btn-ready').className = "bg-slate-600 px-5 py-2 rounded-xl text-sm font-bold opacity-50 cursor-not-allowed";
+            document.getElementById('btn-clear-ships').classList.add('hidden');
+            document.getElementById('btn-rand-layout').classList.add('hidden');
+            
+            db.collection("rooms").doc(roomId).update({
+                [`players.${myId}.ready`]: true,
+                [`boards.${myTeam}`]: JSON.stringify(myLocalBoard),
+                [`ships.${myTeam}`]: JSON.stringify(myLocalShips), // 중첩배열 우회 포장
+                logs: firebase.firestore.FieldValue.arrayUnion(`✔️ [진형 완료] ${myTeam === 'A'?'청팀':'홍팀'}(${myName})이 기지 배치를 마쳤습니다.`)
+            });
+        }
+
+        function clickStart() {
+            db.collection("rooms").doc(roomId).update({
+                status: 'playing',
+                activeTurnTeam: 'A',
+                logs: firebase.firestore.FieldValue.arrayUnion("⚔️ [작전 개시] 모든 팀의 배치가 확정되었습니다! 청팀 선공!")
+            });
+        }
+
+        function renderBoardsUI() {
+            const containerMy = document.getElementById('board-my'), containerEnemy = document.getElementById('board-enemy');
+            containerMy.innerHTML = ''; containerEnemy.innerHTML = '';
+
+            const appendHeaders = (el) => {
+                el.appendChild(document.createElement('div'));
+                lngs.forEach(lng => {
+                    let d = document.createElement('div');
+                    d.className = `text-[10px] font-bold text-center p-1 bg-slate-800 rounded text-slate-400 flex items-center justify-center ${lng==='0'?'border border-dashed border-rose-500 text-rose-400':''}`;
+                    d.innerText = lng === '0' ? '자오선' : lng; el.appendChild(d);
+                });
+            };
+            appendHeaders(containerMy); appendHeaders(containerEnemy);
+
+            for(let r=0; r<10; r++) {
+                let lblMy = document.createElement('div');
+                lblMy.className = `text-[10px] font-bold pr-2 flex items-center justify-end text-slate-400 ${lats[r]==='0'?'text-rose-400':''}`;
+                lblMy.innerText = lats[r] === '0' ? '적도' : lats[r];
+                containerMy.appendChild(lblMy);
+
+                for(let c=0; c<10; c++) {
+                    let cell = document.createElement(statusGame==='setup' ? 'button' : 'div');
+                    cell.className = `aspect-square border border-slate-700/60 rounded flex items-center justify-center text-xs font-bold relative transition-all`;
+                    if(lats[r] === '0' || lngs[c] === '0') cell.add('bg-slate-800/40');
+
+                    cell.addEventListener('mouseenter', () => updateCoordIndicator(r, c));
+
+                    if(statusGame === 'setup') {
+                        if(myLocalBoard[r][c]) {
+                            cell.classList.add('bg-indigo-600', 'text-white');
+                            cell.innerText = myLocalBoard[r][c].type[0];
+                        } else {
+                            cell.classList.add('hover:bg-slate-800');
+                        }
+                        cell.addEventListener('click', () => handleMyBoardCellClick(r, c));
+                    } else {
+                        if(finalTeamBoards[myTeam] && finalTeamBoards[myTeam][r][c]) { 
+                            cell.classList.add('bg-slate-700', 'text-slate-400'); 
+                            cell.innerText = finalTeamBoards[myTeam][r][c].type[0]; 
+                        }
+                        const mark = attackMarks ? attackMarks[myTeam][r][c] : '';
+                        if(mark === 'HIT') { cell.className = "aspect-square border border-slate-700 bg-red-600 text-white flex items-center justify-center text-xs font-bold hit-animation"; cell.innerText = "💥"; }
+                        else if(mark === 'MISS') { cell.className = "aspect-square border border-slate-700 bg-slate-800 text-slate-500 flex items-center justify-center text-xs font-bold"; cell.innerText = "❌"; }
+                    }
+                    containerMy.appendChild(cell);
+                }
+
+                let lblEnemy = document.createElement('div');
+                lblEnemy.className = `text-[10px] font-bold pr-2 flex items-center justify-end text-slate-400 ${lats[r]==='0'?'text-rose-400':''}`;
+                lblEnemy.innerText = lats[r] === '0' ? '적도' : lats[r];
+                containerEnemy.appendChild(lblEnemy);
+
+                for(let c=0; c<10; c++) {
+                    let btn = document.createElement('button');
+                    btn.className = `aspect-square border border-slate-700 bg-slate-800/30 rounded flex items-center justify-center text-sm font-black transition hover:bg-indigo-950/60`;
+                    if(lats[r] === '0' || lngs[c] === '0') btn.classList.add('bg-slate-800/20');
+
+                    btn.addEventListener('mouseenter', () => updateCoordIndicator(r, c));
+
+                    if(statusGame === 'playing') {
+                        const enemyTeam = myTeam === 'A' ? 'B' : 'A';
+                        const mark = attackMarks ? attackMarks[enemyTeam][r][c] : '';
+                        if(mark === 'HIT') { btn.className = "aspect-square border border-slate-700 bg-red-500 text-white flex items-center justify-center text-xs font-bold"; btn.innerText = "O"; btn.disabled = true; }
+                        else if(mark === 'MISS') { btn.className = "aspect-square border border-slate-700 bg-slate-700 text-slate-400 flex items-center justify-center text-xs font-normal"; btn.innerText = "X"; btn.disabled = true; }
+                        else { btn.addEventListener('click', () => requestAttack(r, c)); }
+                    } else { btn.disabled = true; }
+                    containerEnemy.appendChild(btn);
+                }
+            }
+
+            if(statusGame === 'setup') {
+                document.getElementById('my-team-treasure-count').innerText = `배치된 보물: ${myLocalShips.length} / 6개`;
+            } else if(statusGame === 'playing' && cloudRoomData) {
+                document.getElementById('my-team-treasure-count').innerHTML = `침몰된 아군 보물: <span class='text-red-400 font-bold'>${finalTeamShips[myTeam].filter(s => s.sunk).length} / 6</span>`;
+                const enemyTeam = myTeam === 'A' ? 'B' : 'A';
+                document.getElementById('enemy-team-treasure-count').innerHTML = `찾아낸 적군 보물: <span class='text-green-400 font-bold'>${finalTeamShips[enemyTeam].filter(s => s.sunk).length} / 6</span>`;
+            }
+        }
+
+        function requestAttack(r, c) {
+            if(statusGame !== 'playing' || activeTurnTeam !== myTeam) { alert('🚨 지금은 아군 차례가 아닙니다!'); return; }
+            
+            const roomRef = db.collection("rooms").doc(roomId);
+            return db.runTransaction((transaction) => {
+                return transaction.get(roomRef).then((sfDoc) => {
+                    if (!sfDoc.exists) return;
+                    const data = sfDoc.data();
+                    if(data.activeTurnTeam !== myTeam || data.status !== 'playing') return;
+
+                    const defenderTeam = myTeam === 'A' ? 'B' : 'A';
+                    const enemyBoardArr = JSON.parse(data.boards[defenderTeam]);
+                    const enemyShipsArr = JSON.parse(data.ships[defenderTeam]); // 중첩 배열 우회 안전 해독
+                    const attackMarksCopy = JSON.parse(data.attackMarks[defenderTeam]);
+                    const logsCopy = data.logs;
+
+                    if(attackMarksCopy[r][c]) return;
+
+                    const targetObj = enemyBoardArr[r][c];
+                    const coordText = getReadableCoord(r, c);
+                    let nextTurn = myTeam;
+
+                    if(targetObj) {
+                        attackMarksCopy[r][c] = 'HIT';
+                        logsCopy.push(`🎯 [적중] ${myTeam==='A'?'청팀':'홍팀'}(${myName}) 대원이 [${coordText}] 조준 타격 성공!`);
+
+                        const hitShip = enemyShipsArr.find(s => s.coords.some(([sr, sc]) => sr === r && sc === c));
+                        if(hitShip) {
+                            hitShip.hitCount = (hitShip.hitCount || 0) + 1;
+                            if(hitShip.hitCount === hitShip.coords.length) {
+                                hitShip.sunk = true;
+                                logsCopy.push(`💥 [보물 침몰] 상대편의 <b>${hitShip.type}</b>이(가) 완전히 격침되었습니다! ("보물 모두 발견됨!")`);
+                            }
+                        }
+                    } else {
+                        attackMarksCopy[r][c] = 'MISS';
+                        logsCopy.push(`🌊 [실패] ${myTeam==='A'?'청팀':'홍팀'}(${myName}) 대원의 [${coordText}] 포격은 빗나갔습니다.`);
+                        nextTurn = defenderTeam;
+                    }
+
+                    const allSunk = enemyShipsArr.every(s => s.sunk);
+                    let newStatus = 'playing';
+                    if(allSunk) {
+                        newStatus = 'gameOver';
+                        logsCopy.push(`🎖️ [작전 종료] ${myTeam==='A'?'청팀':'홍팀'}이 상대방의 보물 6개를 전멸시켜 대승리했습니다!`);
+                    }
+
+                    transaction.update(roomRef, {
+                        [`attackMarks.${defenderTeam}`]: JSON.stringify(attackMarksCopy),
+                        [`ships.${defenderTeam}`]: JSON.stringify(enemyShipsArr),
+                        activeTurnTeam: nextTurn,
+                        status: newStatus,
+                        logs: logsCopy
+                    });
+                });
+            });
+        }
+
+        function checkGameOverConditions(data) {
+            if(data.status === 'gameOver') {
+                setTimeout(() => {
+                    const shipsA = typeof data.ships.A === 'string' ? JSON.parse(data.ships.A) : [];
+                    const allSunkA = shipsA.every(s => s.sunk);
+                    const winner = allSunkA ? 'B' : 'A';
+                    alert(winner === myTeam ? "🎖️ 승리! 상대 진형의 보물을 모두 찾아냈습니다!" : "💀 패배... 아군의 모든 보물이 적에게 발각되었습니다.");
+                    db.collection("rooms").doc(roomId).delete();
+                    location.reload();
+                }, 800);
+            }
+        }
+
+        function showBigTurnAlert() {
+            const overlay = document.getElementById('turn-alert-overlay');
+            const box = document.getElementById('turn-alert-box');
+            overlay.classList.remove('hidden');
+            setTimeout(() => { box.classList.remove('scale-95'); box.classList.add('scale-100'); }, 10);
+            setTimeout(() => {
+                box.classList.remove('scale-100'); box.classList.add('scale-95');
+                setTimeout(() => { overlay.classList.add('hidden'); }, 150);
+            }, 1500);
+        }
+
+        selectShipToPlace('위도1');
+    </script>
+</body>
+</html>
